@@ -18,53 +18,45 @@ pd.set_option('display.width', 1000)
 
 
 def main():
-    test_classifiers()
-    # clf = grid_search_over_RFC()
+    train_X, train_y, test_X, test_y = read_and_prepare_data(clean=False)
 
-    # clf = grid_search_over_KNN()
-    # classify(clf)
+    # test_classifiers(train_X, train_y)
+    clf = grid_search_over_RFC(train_X, train_y)
+    # clf = grid_search_over_KNN(train_X, train_y)
+    classify(clf, test_X, test_y)
 
 
-def classify(clf):
-    X, y = read_and_prepare_data(test_or_train="train", clean=False)
-    clf.fit(X, y)
-    X, y = read_and_prepare_data(test_or_train="test", clean=False)
-    out = clf.predict(X)
+def classify(clf, test_X, test_y):
+    out = clf.predict(test_X)
     print("PassengerId,Survived")
     for idx, o in enumerate(out):
-        print(y[idx], ",", o, sep="")
+        print(test_y[idx], ",", o, sep="")
 
 
-def grid_search_over_KNN():
-    X, y = read_and_prepare_data(clean=False)
-
+def grid_search_over_KNN(train_X, train_y):
     parameters = {'n_neighbors': [1, 3, 5, 7, 9, 11, 13, 15], "weights": ["uniform", "distance"]}
     knn = KNeighborsClassifier()
 
     clf = GridSearchCV(knn, parameters, cv=10)
-    clf.fit(X, y)
+    clf.fit(train_X, train_y)
 
     # print(clf.cv_results_['mean_test_score'])
     return clf.best_estimator_
 
 
-def grid_search_over_RFC():
-    X, y = read_and_prepare_data(clean=False)
-
+def grid_search_over_RFC(train_X, train_y):
     parameters = {'n_estimators': [30, 40, 50, 60, 70, 80, 90, 100, 200, 300, 400, 500, 600]}
     rfc = RandomForestClassifier(class_weight="balanced", bootstrap=True, oob_score=True,
                                  criterion='gini')
 
     clf = GridSearchCV(rfc, parameters, cv=10)
-    clf.fit(X, y)
+    clf.fit(train_X, train_y)
 
     # print(clf.cv_results_['mean_test_score'])
     return clf.best_estimator_
 
 
-def test_classifiers():
-    X, y = read_and_prepare_data(clean=False)
-
+def test_classifiers(train_X, train_y):
     classifiers = [DecisionTreeClassifier(),
                    RandomForestClassifier(n_estimators=300, class_weight="balanced", bootstrap=True, oob_score=True,
                                           criterion='gini'),
@@ -78,7 +70,7 @@ def test_classifiers():
                    KNeighborsClassifier(n_neighbors=7),
                    ]
     for clf in classifiers:
-        score = np.mean(cross_val_score(clf, X, y, cv=10, n_jobs=-1,
+        score = np.mean(cross_val_score(clf, train_X, train_y, cv=10, n_jobs=-1,
                                         scoring=make_scorer(balanced_accuracy_score, adjusted=True)))
         print(score)
 
@@ -90,51 +82,55 @@ def clean_dataset(df):
     return df[indices_to_keep].astype(np.float64)
 
 
-def read_and_prepare_data(test_or_train="train", clean=True):
-    if test_or_train == "train":
-        df = pd.read_csv('train.csv', sep=",")
-    else:
-        df = pd.read_csv('test.csv', sep=",")
+def read_and_prepare_data(clean=False):
+    df_train = pd.read_csv('train.csv', sep=",")
+
+    df_test = pd.read_csv('test.csv', sep=",")
     # print(df.describe())
 
-    column_names = ["Sex", "SibSp", "Parch"]
-    for col in column_names:
-        df = hot_encode_column(col, df)
+    df_train['Family_size'] = df_train['SibSp'] + df_train['Parch'] + 1
+    df_test['Family_size'] = df_test['SibSp'] + df_test['Parch'] + 1
 
-    column_names = ["Pclass", "Age", "Fare"]
+    column_names = ["Sex"]
     for col in column_names:
-        standard_scale_column(col, df)
+        df_train = hot_encode_column(col, df_train)
+        df_test = hot_encode_column(col, df_test)
 
-    df = df.drop(labels=["Name", "Ticket", "Cabin", "Embarked", "Sex_female"], axis=1)
+    column_names = ["Pclass", "Age", "Fare", "Family_size"]
+    for col in column_names:
+        scaler = StandardScaler()
+        scaler.fit(df_train[[col]])
+        scale(col, df_train, scaler)
+        scale(col, df_test, scaler)
+
+    column_names = ["Name", "Ticket", "Cabin", "Embarked", "Sex_female", "SibSp", "Parch"]
+    df_train = df_train.drop(labels=column_names, axis=1)
+    df_test = df_test.drop(labels=column_names, axis=1)
 
     if clean:
-        clean_dataset(df)
+        clean_dataset(df_train)
+        clean_dataset(df_test)
     else:
-        df = df.fillna(0)
-    # print(df)
-    if test_or_train == "train":
-        y_labels = df.columns[[1]]
-        x_labels = df.columns[2:]
-    else:
-        y_labels = df.columns[[0]]
-        x_labels = df.columns[1:]
-    # print(x_labels, y_labels)
-    X = df.filter(x_labels)
-    y = df.filter(y_labels)
-    X = X.values
-    y = y.values.ravel()
+        df_train = df_train.fillna(0)
+        df_test = df_test.fillna(0)
 
-    return X, y
+    train_y_labels = df_train.columns[[1]]
+    train_x_labels = df_train.columns[2:]
 
+    test_y_labels = df_test.columns[[0]]
+    test_x_labels = df_test.columns[1:]
 
-def standard_scale_column(col, df):
-    scaler = StandardScaler()
-    scale(col, df, scaler)
+    X = df_train.filter(train_x_labels)
+    y = df_train.filter(train_y_labels)
+    train_X = X.values
+    train_y = y.values.ravel()
 
+    X = df_test.filter(test_x_labels)
+    y = df_test.filter(test_y_labels)
+    test_X = X.values
+    test_y = y.values.ravel()
 
-def min_max_scale_column(col, df):
-    scaler = StandardScaler()
-    scale(col, df, scaler)
+    return train_X, train_y, test_X, test_y
 
 
 def scale(col, df, scaler):

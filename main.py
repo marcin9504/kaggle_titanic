@@ -1,149 +1,141 @@
+from warnings import filterwarnings
+
+import matplotlib.pyplot as plt
 import pandas as pd
-import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+import seaborn as sns
+from scipy.special import boxcox1p
+from scipy.stats import skew
+from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
+from sklearn.ensemble import RandomForestClassifier, \
+    AdaBoostClassifier
+from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.gaussian_process.kernels import RBF
 from sklearn.linear_model import LogisticRegression, SGDClassifier
-from sklearn.metrics import make_scorer, balanced_accuracy_score
-from sklearn.model_selection import cross_val_score, GridSearchCV
+from sklearn.model_selection import cross_val_score
+from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier, BaggingClassifier, AdaBoostClassifier
 from sklearn.tree import DecisionTreeClassifier
 
-pd.set_option('display.max_columns', None)
-# pd.set_option('display.height', 1000)
-# pd.set_option('display.max_rows', 500)
-pd.set_option('display.width', 1000)
+pd.set_option("display.max_columns", None)
+# pd.set_option("display.height", 1000)
+# pd.set_option("display.max_rows", 500)
+pd.set_option("display.width", 200)
+
+from sklearn.exceptions import DataConversionWarning
+
+filterwarnings(action="ignore", category=DataConversionWarning)
 
 
 def main():
-    train_X, train_y, test_X, test_y = read_and_prepare_data(clean=False)
+    train = pd.read_csv("train.csv", sep=",")
 
-    # test_classifiers(train_X, train_y)
-    clf = grid_search_over_RFC(train_X, train_y)
-    # clf = grid_search_over_KNN(train_X, train_y)
-    classify(clf, test_X, test_y)
+    test = pd.read_csv("test.csv", sep=",")
+    # print(train.head())
 
+    train_ids = train["PassengerId"]
+    test_ids = test["PassengerId"]
 
-def classify(clf, test_X, test_y):
-    out = clf.predict(test_X)
-    print("PassengerId,Survived")
-    for idx, o in enumerate(out):
-        print(test_y[idx], ",", o, sep="")
+    train = train.drop("PassengerId", axis=1)
+    test = test.drop("PassengerId", axis=1)
+    # print(train.shape)
+    # print(test.shape)
 
+    num_train = train.shape[0]
+    num_test = test.shape[0]
+    y_train = train.Survived.values
 
-def grid_search_over_KNN(train_X, train_y):
-    parameters = {'n_neighbors': [1, 3, 5, 7, 9, 11, 13, 15], "weights": ["uniform", "distance"]}
-    knn = KNeighborsClassifier()
+    all_data = pd.concat((train, test), sort=True).reset_index(drop=True)
+    # print(all_data.head())
+    all_data = all_data.drop(["Survived"], axis=1)
 
-    clf = GridSearchCV(knn, parameters, cv=10)
-    clf.fit(train_X, train_y)
+    all_data_missing = all_data.isnull().sum() / len(all_data)
+    all_data_missing = all_data_missing.sort_values(ascending=False)
+    # print(all_data_missing)
+    correlation_matrix = train.corr()
+    plt.subplots()
+    sns.heatmap(correlation_matrix)
+    # plt.show()
 
-    # print(clf.cv_results_['mean_test_score'])
-    return clf.best_estimator_
+    # all_data["LotFrontage"] = all_data.groupby("Neighborhood")["LotFrontage"] \
+    #     .transform(lambda x: x.fillna(x.median()))
 
+    columns_to_fill_with_most_frequent = ["Embarked"]
+    for column in columns_to_fill_with_most_frequent:
+        all_data[column] = all_data[column].fillna(all_data[column].mode()[0])
 
-def grid_search_over_RFC(train_X, train_y):
-    parameters = {'n_estimators': [30, 40, 50, 60, 70, 80, 90, 100, 200, 300, 400, 500, 600]}
-    rfc = RandomForestClassifier(class_weight="balanced", bootstrap=True, oob_score=True,
-                                 criterion='gini')
+    columns_to_fill_with_median = ["Age", "Fare"]
+    for column in columns_to_fill_with_median:
+        all_data[column] = all_data[column].fillna(all_data[column].mean())
 
-    clf = GridSearchCV(rfc, parameters, cv=10)
-    clf.fit(train_X, train_y)
+    columns_to_drop = ["Cabin", "Name", "Ticket"]
+    all_data = all_data.drop(columns_to_drop, axis=1)
 
-    # print(clf.cv_results_['mean_test_score'])
-    return clf.best_estimator_
+    all_data_missing = all_data.isnull().sum() / len(all_data)
+    all_data_missing = all_data_missing.sort_values(ascending=False)
+    # print(all_data_missing)
 
+    # print(all_data.head())
+    columns_to_change_to_categorial = ["Embarked", "Sex"]
+    for column in columns_to_change_to_categorial:
+        all_data[column] = all_data[column].apply(str)
 
-def test_classifiers(train_X, train_y):
-    classifiers = [DecisionTreeClassifier(),
-                   RandomForestClassifier(n_estimators=300, class_weight="balanced", bootstrap=True, oob_score=True,
-                                          criterion='gini'),
-                   SVC(kernel='linear', gamma="scale", class_weight="balanced"),
-                   SVC(kernel="poly", gamma="scale", class_weight="balanced"),
-                   SVC(kernel="rbf", gamma="scale", class_weight="balanced"),
-                   SVC(kernel="sigmoid", gamma="scale", class_weight="balanced"),
-                   LogisticRegression(solver="lbfgs", max_iter=2000, class_weight="balanced"),
-                   SGDClassifier(max_iter=200, tol=1e-3, class_weight="balanced"),
-                   MLPClassifier(max_iter=200),
-                   KNeighborsClassifier(n_neighbors=7),
-                   ]
-    for clf in classifiers:
-        score = np.mean(cross_val_score(clf, train_X, train_y, cv=10, n_jobs=-1,
-                                        scoring=make_scorer(balanced_accuracy_score, adjusted=True)))
-        print(score)
+    all_data["FamilySize"] = all_data["Parch"] + all_data["SibSp"]
 
+    numeric_features = all_data.dtypes[all_data.dtypes != "object"].index
+    skewed_features = all_data[numeric_features].apply(lambda x: skew(x.dropna())).sort_values(ascending=False)
+    # print(skewed_features)
 
-def clean_dataset(df):
-    assert isinstance(df, pd.DataFrame), "df needs to be a pd.DataFrame"
-    df.dropna(inplace=True)
-    indices_to_keep = ~df.isin([np.nan, np.inf, -np.inf]).any(1)
-    return df[indices_to_keep].astype(np.float64)
+    skewness = pd.DataFrame({"Skew": skewed_features})
+    skewness = skewness[abs(skewness) > 0.75]
 
+    skewed_features = skewness.index
+    lam = 0.15
+    for feat in skewed_features:
+        # all_data[feat] += 1
+        all_data[feat] = boxcox1p(all_data[feat], lam)
 
-def read_and_prepare_data(clean=False):
-    df_train = pd.read_csv('train.csv', sep=",")
+    numeric_features = all_data.dtypes[all_data.dtypes != "object"].index
+    skewed_features = all_data[numeric_features].apply(lambda x: skew(x.dropna())).sort_values(ascending=False)
+    # print(skewed_features)
 
-    df_test = pd.read_csv('test.csv', sep=",")
-    # print(df.describe())
+    all_data = pd.get_dummies(all_data)
 
-    df_train['Family_size'] = df_train['SibSp'] + df_train['Parch'] + 1
-    df_test['Family_size'] = df_test['SibSp'] + df_test['Parch'] + 1
+    all_data = all_data.drop(["Sex_female"], axis=1)
+    # print(all_data.head(20))
 
-    column_names = ["Sex"]
-    for col in column_names:
-        df_train = hot_encode_column(col, df_train)
-        df_test = hot_encode_column(col, df_test)
+    train = all_data[:num_train]
+    test = all_data[num_train:]
 
-    column_names = ["Pclass", "Age", "Fare", "Family_size"]
-    for col in column_names:
-        scaler = StandardScaler()
-        scaler.fit(df_train[[col]])
-        scale(col, df_train, scaler)
-        scale(col, df_test, scaler)
+    models = {
+        "random_forest": RandomForestClassifier(n_estimators=100),
+        "mlp": MLPClassifier(max_iter=1000),
+        "logistic": LogisticRegression(solver="lbfgs"),
+        "sgd": SGDClassifier(max_iter=1000, tol=1e-3),
+        "knn": KNeighborsClassifier(3),
+        "svm linear": SVC(kernel="linear", C=0.025),
+        "svm rbf": SVC(gamma=2, C=1),
+        "gaussian_process": GaussianProcessClassifier(1.0 * RBF(1.0)),
+        "decision_tree": DecisionTreeClassifier(max_depth=5),
+        "ada_boost": AdaBoostClassifier(),
+        "naive_bayes": GaussianNB(),
+        "qda": QuadraticDiscriminantAnalysis()
+    }
+    for model_name in models:
+        print(model_name)
+        model = models[model_name]
+        score = cross_val_score(model, train.values, y_train, cv=4, n_jobs=-1)
+        print(score.mean(), score.std())
 
-    column_names = ["Name", "Ticket", "Cabin", "Embarked", "Sex_female", "SibSp", "Parch"]
-    df_train = df_train.drop(labels=column_names, axis=1)
-    df_test = df_test.drop(labels=column_names, axis=1)
+    final_classifier = models["mlp"]
+    final_classifier.fit(train.values, y_train)
+    predictions = final_classifier.predict(test.values)
 
-    if clean:
-        clean_dataset(df_train)
-        clean_dataset(df_test)
-    else:
-        df_train = df_train.fillna(0)
-        df_test = df_test.fillna(0)
-
-    train_y_labels = df_train.columns[[1]]
-    train_x_labels = df_train.columns[2:]
-
-    test_y_labels = df_test.columns[[0]]
-    test_x_labels = df_test.columns[1:]
-
-    X = df_train.filter(train_x_labels)
-    y = df_train.filter(train_y_labels)
-    train_X = X.values
-    train_y = y.values.ravel()
-
-    X = df_test.filter(test_x_labels)
-    y = df_test.filter(test_y_labels)
-    test_X = X.values
-    test_y = y.values.ravel()
-
-    return train_X, train_y, test_X, test_y
-
-
-def scale(col, df, scaler):
-    columns = df[[col]]
-    scaled_values = scaler.fit_transform(columns)
-    df[col] = scaled_values
-
-
-def hot_encode_column(column_name, df):
-    new_cols = pd.get_dummies(df[column_name], prefix=column_name)
-    df = df.drop(column_name, axis=1)
-    df = df.join(new_cols)
-    return df
+    final = pd.DataFrame()
+    final["PassengerId"] = test_ids
+    final["Survived"] = predictions
+    final.to_csv("submission.csv", index=False)
 
 
 if __name__ == "__main__":
